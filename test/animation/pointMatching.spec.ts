@@ -4,7 +4,7 @@ import { matchPointsByStrategy, getNewPointEntryDirection, AnimatablePoint } fro
 interface TestPoint extends AnimatablePoint {
   x: number | null;
   y: number | null;
-  payload?: { id?: string; name?: string; timestamp?: number };
+  payload?: { id?: string; name?: string; timestamp?: number; x?: number };
 }
 
 describe('matchPointsByStrategy', () => {
