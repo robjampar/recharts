@@ -84,6 +84,16 @@ function buildPreviousPointsMap<T extends AnimatablePoint>(
 }
 
 /**
+ * Result of matching including removed points
+ */
+export interface MatchResult<T> {
+  /** Points that exist in current data (may or may not have previous match) */
+  matched: ReadonlyArray<MatchedPoint<T>>;
+  /** Points that existed in previous data but are removed in current data */
+  removed: ReadonlyArray<T>;
+}
+
+/**
  * Match current points to previous points based on the specified strategy.
  *
  * This function is used during animation transitions to determine which previous
@@ -149,6 +159,51 @@ export function matchPointsByStrategy<T extends AnimatablePoint>(
       previous,
     };
   });
+}
+
+/**
+ * Match current points to previous points AND identify removed points.
+ *
+ * This is an extended version of matchPointsByStrategy that also returns
+ * points that existed in previousPoints but don't exist in currentPoints.
+ * These "removed" points are needed for smooth exit animations.
+ *
+ * @param currentPoints - The new array of points to animate to
+ * @param previousPoints - The previous array of points to animate from
+ * @param strategy - The matching strategy to use
+ * @returns Object containing matched points and removed points
+ */
+export function matchPointsWithRemovals<T extends AnimatablePoint>(
+  currentPoints: ReadonlyArray<T>,
+  previousPoints: ReadonlyArray<T> | null,
+  strategy: PointMatchingStrategy<T>,
+): MatchResult<T> {
+  const matched = matchPointsByStrategy(currentPoints, previousPoints, strategy);
+
+  // If no previous points or using 'index' strategy, no removals to track
+  if (!previousPoints || previousPoints.length === 0 || strategy === 'index') {
+    return { matched, removed: [] };
+  }
+
+  // Build a set of keys from current points
+  const currentKeys = new Set<string | number>();
+  for (let i = 0; i < currentPoints.length; i++) {
+    const key = getPointKey(currentPoints[i], i, strategy);
+    if (key != null) {
+      currentKeys.add(key);
+    }
+  }
+
+  // Find previous points that don't exist in current
+  const removed: T[] = [];
+  for (let i = 0; i < previousPoints.length; i++) {
+    const key = getPointKey(previousPoints[i], i, strategy);
+    if (key != null && !currentKeys.has(key)) {
+      removed.push(previousPoints[i]);
+    }
+  }
+
+  return { matched, removed };
 }
 
 /**

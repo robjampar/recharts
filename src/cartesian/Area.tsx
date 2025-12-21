@@ -21,7 +21,7 @@ import {
 import { Dots, DotsDotProps } from '../component/Dots';
 import { Global } from '../util/Global';
 import { interpolate, isNan, isNullish, isNumber } from '../util/DataUtils';
-import { PointMatchingStrategy, matchPointsByStrategy } from '../animation/pointMatching';
+import { PointMatchingStrategy, matchPointsWithRemovals, matchPointsByStrategy } from '../animation/pointMatching';
 import {
   getCateCoordinateOfLine,
   getNormalizedStackId,
@@ -681,7 +681,11 @@ function AreaWithAnimation({
       >
         {(t: number) => {
           if (prevPoints) {
-            const matchedPoints = matchPointsByStrategy(points, prevPoints, animationMatchBy);
+            const { matched: matchedPoints, removed: removedPoints } = matchPointsWithRemovals(
+              points,
+              prevPoints,
+              animationMatchBy,
+            );
 
             // Calculate global shift from matched points - how far the line is moving
             let totalShift = 0;
@@ -694,7 +698,9 @@ function AreaWithAnimation({
             }
             const avgShift = matchedCount > 0 ? totalShift / matchedCount : 0;
 
-            const stepPoints: ReadonlyArray<AreaPointItem> =
+            // At t=1, return only current points (animation complete, removed points gone)
+            // During animation (t<1), include both current and removed points
+            const stepPoints: AreaPointItem[] =
               /*
                * Here it is important that at the very end of the animation, on the last frame,
                * we render the original points without any interpolation.
@@ -703,25 +709,46 @@ function AreaWithAnimation({
                * then we would break animations.
                */
               t === 1
-                ? points
-                : matchedPoints.map(({ current, previous }): AreaPointItem => {
-                    if (previous) {
-                      // Matched point: interpolate from old position to new
-                      return {
-                        ...current,
-                        x: interpolate(previous.x, current.x, t),
-                        y: interpolate(previous.y, current.y, t),
-                      };
-                    }
+                ? [...points]
+                : [
+                    // Current points (matched and new)
+                    ...matchedPoints.map(({ current, previous }): AreaPointItem => {
+                      if (previous) {
+                        // Matched point: interpolate from old position to new
+                        return {
+                          ...current,
+                          x: interpolate(previous.x, current.x, t),
+                          y: interpolate(previous.y, current.y, t),
+                        };
+                      }
 
-                    // New point: start at final position + shift, animate to final position
-                    // This keeps new points at correct relative spacing from the start
-                    if (current.x !== null) {
-                      return { ...current, x: interpolate(current.x + avgShift, current.x, t), y: current.y };
-                    }
+                      // New point: start at final position + shift, animate to final position
+                      // This keeps new points at correct relative spacing from the start
+                      if (current.x !== null) {
+                        return { ...current, x: interpolate(current.x + avgShift, current.x, t), y: current.y };
+                      }
 
-                    return current;
-                  });
+                      return current;
+                    }),
+                    // Removed points: animate from their position to off-screen
+                    ...removedPoints.map((removed): AreaPointItem => {
+                      if (removed.x !== null) {
+                        const exitX = removed.x - avgShift;
+                        return {
+                          ...removed,
+                          x: interpolate(removed.x, exitX, t),
+                          y: removed.y,
+                        };
+                      }
+                      return removed;
+                    }),
+                  ];
+
+            // Sort by x coordinate to maintain proper area drawing order
+            if (t < 1) {
+              stepPoints.sort((a, b) => (a.x ?? 0) - (b.x ?? 0));
+            }
+
             let stepBaseLine: number | ReadonlyArray<NullableCoordinate>;
 
             if (isNumber(baseLine)) {

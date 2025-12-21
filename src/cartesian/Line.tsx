@@ -23,7 +23,7 @@ import {
 import { Dots } from '../component/Dots';
 import { ErrorBarDataItem, ErrorBarDataPointFormatter } from './ErrorBar';
 import { interpolate, isNullish } from '../util/DataUtils';
-import { PointMatchingStrategy, matchPointsByStrategy } from '../animation/pointMatching';
+import { PointMatchingStrategy, matchPointsWithRemovals } from '../animation/pointMatching';
 import { isClipDot } from '../util/ReactUtils';
 import { getCateCoordinateOfLine, getTooltipNameProp, getValueByDataKey } from '../util/ChartUtils';
 import {
@@ -801,7 +801,11 @@ function CurveWithAnimation({
           }
 
           if (prevPoints) {
-            const matchedPoints = matchPointsByStrategy(points, prevPoints, animationMatchBy);
+            const { matched: matchedPoints, removed: removedPoints } = matchPointsWithRemovals(
+              points,
+              prevPoints,
+              animationMatchBy,
+            );
 
             // Calculate global shift from matched points - how far the line is moving
             let totalShift = 0;
@@ -816,6 +820,7 @@ function CurveWithAnimation({
               }
             }
             const avgShift = matchedCount > 0 ? totalShift / matchedCount : 0;
+            const hasRemovedPoints = removedPoints.length > 0;
 
             // Pre-compute min/max x of all current points (for fade bounds)
             let minX = Infinity;
@@ -832,44 +837,70 @@ function CurveWithAnimation({
             const fadeLeftBound = minX;
             const fadeRightBound = maxX;
 
-            if (animateFade && animateNewValues && hasNewPoints) {
-              // Positive shift means line is moving right (new points on left)
-              // Negative shift means line is moving left (new points on right)
+            if (animateFade && animateNewValues && (hasNewPoints || hasRemovedPoints)) {
+              // Positive shift means line is moving right (new points on left, old exit right)
+              // Negative shift means line is moving left (new points on right, old exit left)
               if (avgShift > 0) {
-                fadeDirection = 'left';
+                fadeDirection = hasNewPoints ? 'left' : 'right';
               } else if (avgShift < 0) {
-                fadeDirection = 'right';
+                fadeDirection = hasNewPoints ? 'right' : 'left';
               }
             }
 
-            const stepData =
+            // At t=1, return only current points (animation complete, removed points gone)
+            // During animation (t<1), include both current and removed points
+            const stepData: LinePointItem[] =
               t === 1
-                ? points
-                : matchedPoints.map(({ current, previous }): LinePointItem => {
-                    if (previous) {
-                      // Matched point: interpolate from old position to new
-                      return {
-                        ...current,
-                        x: interpolate(previous.x, current.x, t),
-                        y: interpolate(previous.y, current.y, t),
-                      };
-                    }
+                ? [...points]
+                : [
+                    // Current points (matched and new)
+                    ...matchedPoints.map(({ current, previous }): LinePointItem => {
+                      if (previous) {
+                        // Matched point: interpolate from old position to new
+                        return {
+                          ...current,
+                          x: interpolate(previous.x, current.x, t),
+                          y: interpolate(previous.y, current.y, t),
+                        };
+                      }
 
-                    // New point: start at final position + shift, animate to final position
-                    // This keeps new points at correct relative spacing from the start
-                    if (animateNewValues && current.x !== null) {
+                      // New point: start at final position + shift, animate to final position
+                      // This keeps new points at correct relative spacing from the start
+                      if (animateNewValues && current.x !== null) {
+                        return {
+                          ...current,
+                          x: interpolate(current.x + avgShift, current.x, t),
+                          y: current.y,
+                        };
+                      }
                       return {
                         ...current,
-                        x: interpolate(current.x + avgShift, current.x, t),
+                        x: current.x,
                         y: current.y,
                       };
-                    }
-                    return {
-                      ...current,
-                      x: current.x,
-                      y: current.y,
-                    };
-                  });
+                    }),
+                    // Removed points: animate from their position to off-screen
+                    // They slide in the opposite direction of the shift
+                    ...removedPoints.map((removed): LinePointItem => {
+                      if (removed.x !== null) {
+                        // Removed points slide off in direction opposite to the shift
+                        // If avgShift < 0 (line moving left), removed points exit left
+                        // If avgShift > 0 (line moving right), removed points exit right
+                        const exitX = removed.x - avgShift;
+                        return {
+                          ...removed,
+                          x: interpolate(removed.x, exitX, t),
+                          y: removed.y,
+                        };
+                      }
+                      return removed;
+                    }),
+                  ];
+
+            // Sort by x coordinate to maintain proper line drawing order
+            if (t < 1) {
+              stepData.sort((a, b) => (a.x ?? 0) - (b.x ?? 0));
+            }
 
             const fadeConfig: FadeConfig | undefined =
               animateFade && fadeDirection
@@ -882,7 +913,7 @@ function CurveWithAnimation({
                 : undefined;
 
             // eslint-disable-next-line no-param-reassign
-            previousPointsRef.current = stepData;
+            previousPointsRef.current = t === 1 ? points : stepData;
             return (
               <StaticCurve
                 props={props}
