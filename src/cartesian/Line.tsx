@@ -716,7 +716,32 @@ function CurveWithAnimation({
               animationMatchBy,
             );
 
-            // Calculate global shift from matched points - how far the line is moving
+            // Find leftmost and rightmost matched points (that have previous positions)
+            let leftmostMatched: { current: LinePointItem; previous: LinePointItem } | null = null;
+            let rightmostMatched: { current: LinePointItem; previous: LinePointItem } | null = null;
+
+            for (const match of matchedPoints) {
+              if (match.previous) {
+                if (!leftmostMatched || (match.current.x ?? Infinity) < (leftmostMatched.current.x ?? Infinity)) {
+                  leftmostMatched = match as { current: LinePointItem; previous: LinePointItem };
+                }
+                if (!rightmostMatched || (match.current.x ?? -Infinity) > (rightmostMatched.current.x ?? -Infinity)) {
+                  rightmostMatched = match as { current: LinePointItem; previous: LinePointItem };
+                }
+              }
+            }
+
+            // Calculate average spacing from current (final) positions
+            const allCurrentX = matchedPoints
+              .map(m => m.current.x)
+              .filter((x): x is number => x !== null)
+              .sort((a, b) => a - b);
+            const avgSpacing =
+              allCurrentX.length > 1
+                ? (allCurrentX[allCurrentX.length - 1] - allCurrentX[0]) / (allCurrentX.length - 1)
+                : 100;
+
+            // Calculate global shift for removed points
             let totalShift = 0;
             let matchedCount = 0;
             for (const { current, previous } of matchedPoints) {
@@ -727,49 +752,53 @@ function CurveWithAnimation({
             }
             const avgShift = matchedCount > 0 ? totalShift / matchedCount : 0;
 
-            // At t=1, return only current points (animation complete, removed points gone)
-            // During animation (t<1), include both current and removed points
+            // All points animate together maintaining relative spacing
+            // New points slide in from extrapolated off-screen positions, removed points slide out
             const stepData: LinePointItem[] =
               t === 1
                 ? [...points]
                 : [
-                    // Current points (matched and new)
+                    // Matched and new points
                     ...matchedPoints.map(({ current, previous }): LinePointItem => {
                       if (previous) {
-                        // Matched point: interpolate from old position to new
+                        // Matched point: animate from old to new position
                         return {
                           ...current,
                           x: interpolate(previous.x, current.x, t),
                           y: interpolate(previous.y, current.y, t),
                         };
                       }
-
-                      // New point: start at final position + shift, animate to final position
-                      // This keeps new points at correct relative spacing from the start
+                      // New point: extrapolate entry position from nearest matched point
                       if (animateNewValues && current.x !== null) {
+                        let entryX: number;
+
+                        if (leftmostMatched && current.x < (leftmostMatched.current.x ?? Infinity)) {
+                          // New point is to the LEFT of all matched points
+                          const spacingUnits = ((leftmostMatched.current.x ?? 0) - current.x) / avgSpacing;
+                          entryX = (leftmostMatched.previous.x ?? 0) - spacingUnits * avgSpacing;
+                        } else if (rightmostMatched && current.x > (rightmostMatched.current.x ?? -Infinity)) {
+                          // New point is to the RIGHT of all matched points
+                          const spacingUnits = (current.x - (rightmostMatched.current.x ?? 0)) / avgSpacing;
+                          entryX = (rightmostMatched.previous.x ?? 0) + spacingUnits * avgSpacing;
+                        } else {
+                          // Fallback: use avgShift (for points between matched points)
+                          entryX = current.x + avgShift;
+                        }
+
                         return {
                           ...current,
-                          x: interpolate(current.x + avgShift, current.x, t),
+                          x: interpolate(entryX, current.x, t),
                           y: current.y,
                         };
                       }
-                      return {
-                        ...current,
-                        x: current.x,
-                        y: current.y,
-                      };
+                      return current;
                     }),
-                    // Removed points: animate from their position to off-screen
-                    // They slide in the opposite direction of the shift
+                    // Removed points: slide from original to off-screen
                     ...removedPoints.map((removed): LinePointItem => {
                       if (removed.x !== null) {
-                        // Removed points slide off in direction opposite to the shift
-                        // If avgShift < 0 (line moving left), removed points exit left
-                        // If avgShift > 0 (line moving right), removed points exit right
-                        const exitX = removed.x - avgShift;
                         return {
                           ...removed,
-                          x: interpolate(removed.x, exitX, t),
+                          x: interpolate(removed.x, removed.x - avgShift, t),
                           y: removed.y,
                         };
                       }
