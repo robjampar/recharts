@@ -1,4 +1,5 @@
-import { DataKey, getValueByDataKey } from '../util/ChartUtils';
+import { getValueByDataKey } from '../util/ChartUtils';
+import { DataKey } from '../util/types';
 
 /**
  * Represents a point with x/y coordinates and optional payload data
@@ -52,7 +53,10 @@ function getPointKey<T extends AnimatablePoint>(
   if (point.payload != null) {
     const value = getValueByDataKey(point.payload, strategy);
     if (value != null) {
-      return typeof value === 'object' ? JSON.stringify(value) : value;
+      if (typeof value === 'string' || typeof value === 'number') {
+        return value;
+      }
+      return JSON.stringify(value);
     }
   }
 

@@ -183,7 +183,6 @@ export const ScenarioComparison = {
                   dot
                   animationDuration={800}
                   animationMatchBy="x"
-                  animateFade
                 />
               </LineChart>
             </ResponsiveContainer>
@@ -305,7 +304,6 @@ export const RealTimeStreaming = {
               dot={false}
               animationDuration={Math.min(updateInterval * 0.8, 500)}
               animationMatchBy={matchBy}
-              animateFade={useFade}
             />
           </LineChart>
         </ResponsiveContainer>
@@ -430,7 +428,6 @@ export const StressTest = {
                   dot={false}
                   animationDuration={800}
                   animationMatchBy="x"
-                  animateFade
                 />
               </LineChart>
             </ResponsiveContainer>

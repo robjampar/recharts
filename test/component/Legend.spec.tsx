@@ -455,7 +455,6 @@ describe('<Legend />', () => {
               activeDot: {
                 r: 8,
               },
-              animateFade: false,
               animateNewValues: true,
               animationBegin: 0,
               animationDuration: 1500,
@@ -486,7 +485,6 @@ describe('<Legend />', () => {
             inactive: false,
             payload: {
               activeDot: true,
-              animateFade: false,
               animateNewValues: true,
               animationBegin: 0,
               animationDuration: 1500,
@@ -805,8 +803,6 @@ describe('<Legend />', () => {
               activeDot: {
                 r: 8,
               },
-              animateFade: false,
-              animateFade: false,
               animateNewValues: true,
               animationBegin: 0,
               animationDuration: 1500,
@@ -837,8 +833,6 @@ describe('<Legend />', () => {
             inactive: false,
             payload: {
               activeDot: true,
-              animateFade: false,
-              animateFade: false,
               animateNewValues: true,
               animationBegin: 0,
               animationDuration: 1500,

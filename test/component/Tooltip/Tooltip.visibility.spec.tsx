@@ -774,7 +774,6 @@ describe('Tooltip visibility', () => {
           payload: {
             // @ts-expect-error extra properties not expected in the type
             activeDot: true,
-            animateFade: false,
             animateNewValues: true,
             animationBegin: 0,
             animationDuration: 1500,

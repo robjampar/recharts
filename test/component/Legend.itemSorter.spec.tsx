@@ -78,7 +78,6 @@ describe('Legend.itemSorter', () => {
               inactive: false,
               payload: {
                 activeDot: true,
-                animateFade: false,
                 animateNewValues: true,
                 animationBegin: 0,
                 animationDuration: 1500,
@@ -109,7 +108,6 @@ describe('Legend.itemSorter', () => {
               inactive: false,
               payload: {
                 activeDot: true,
-                animateFade: false,
                 animateNewValues: true,
                 animationBegin: 0,
                 animationDuration: 1500,
@@ -176,7 +174,6 @@ describe('Legend.itemSorter', () => {
               inactive: false,
               payload: {
                 activeDot: true,
-                animateFade: false,
                 animateNewValues: true,
                 animationBegin: 0,
                 animationDuration: 1500,
@@ -207,7 +204,6 @@ describe('Legend.itemSorter', () => {
               inactive: false,
               payload: {
                 activeDot: true,
-                animateFade: false,
                 animateNewValues: true,
                 animationBegin: 0,
                 animationDuration: 1500,
