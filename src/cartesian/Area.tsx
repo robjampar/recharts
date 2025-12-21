@@ -21,6 +21,7 @@ import {
 import { Dots, DotsDotProps } from '../component/Dots';
 import { Global } from '../util/Global';
 import { interpolate, isNan, isNullish, isNumber } from '../util/DataUtils';
+import { PointMatchingStrategy, matchPointsByStrategy } from '../animation/pointMatching';
 import {
   getCateCoordinateOfLine,
   getNormalizedStackId,
@@ -91,6 +92,7 @@ interface InternalAreaProps extends ZIndexable {
   animationBegin: number;
   animationDuration: AnimationDuration;
   animationEasing: AnimationTiming;
+  animationMatchBy: PointMatchingStrategy<AreaPointItem>;
   baseLine: number | ReadonlyArray<NullableCoordinate> | undefined;
 
   baseValue?: BaseValue;
@@ -160,6 +162,28 @@ interface AreaProps extends ZIndexable {
    * @defaultValue 'ease'
    */
   animationEasing?: AnimationTiming;
+  /**
+   * Controls how points are matched between data updates during animation.
+   *
+   * This is important for smooth animations when data changes, especially for
+   * time-series charts with sliding windows where new data is appended and old data removed.
+   *
+   * - `'index'`: Match by array index (default, current behavior). May cause visual distortion
+   *   with sliding windows as points animate to wrong positions.
+   * - `'x'`: Match by x-coordinate. Ideal for time-series data where each point has a unique
+   *   x-position. Points with the same x will smoothly animate to their new y-values, and
+   *   new points will smoothly enter from the appropriate edge.
+   * - `string` (DataKey): Match by a specific key in the data payload (e.g., 'timestamp', 'id').
+   *   Useful for categorical data or when x-coordinates may change.
+   * - `function`: Custom matching function `(point, index) => key`. Return a unique identifier
+   *   for each point to control how points are matched.
+   *
+   * @defaultValue 'index'
+   * @example <Area dataKey="value" animationMatchBy="x" /> // Match by x-coordinate for time-series
+   * @example <Area dataKey="value" animationMatchBy="timestamp" /> // Match by timestamp in payload
+   * @example <Area dataKey="value" animationMatchBy={(point) => point.payload?.id} /> // Custom matching
+   */
+  animationMatchBy?: PointMatchingStrategy<AreaPointItem>;
   /**
    * Baseline of the area:
    * - number: uses the corresponding axis value as a flat baseline;
@@ -611,6 +635,7 @@ function AreaWithAnimation({
     animationBegin,
     animationDuration,
     animationEasing,
+    animationMatchBy,
     onAnimationStart,
     onAnimationEnd,
   } = props;
@@ -656,7 +681,19 @@ function AreaWithAnimation({
       >
         {(t: number) => {
           if (prevPoints) {
-            const prevPointsDiffFactor = prevPoints.length / points.length;
+            const matchedPoints = matchPointsByStrategy(points, prevPoints, animationMatchBy);
+
+            // Calculate global shift from matched points - how far the line is moving
+            let totalShift = 0;
+            let matchedCount = 0;
+            for (const { current, previous } of matchedPoints) {
+              if (previous && current.x !== null && previous.x !== null) {
+                totalShift += previous.x - current.x;
+                matchedCount++;
+              }
+            }
+            const avgShift = matchedCount > 0 ? totalShift / matchedCount : 0;
+
             const stepPoints: ReadonlyArray<AreaPointItem> =
               /*
                * Here it is important that at the very end of the animation, on the last frame,
@@ -667,15 +704,23 @@ function AreaWithAnimation({
                */
               t === 1
                 ? points
-                : points.map((entry, index): AreaPointItem => {
-                    const prevPointIndex = Math.floor(index * prevPointsDiffFactor);
-                    if (prevPoints[prevPointIndex]) {
-                      const prev: AreaPointItem = prevPoints[prevPointIndex];
-
-                      return { ...entry, x: interpolate(prev.x, entry.x, t), y: interpolate(prev.y, entry.y, t) };
+                : matchedPoints.map(({ current, previous }): AreaPointItem => {
+                    if (previous) {
+                      // Matched point: interpolate from old position to new
+                      return {
+                        ...current,
+                        x: interpolate(previous.x, current.x, t),
+                        y: interpolate(previous.y, current.y, t),
+                      };
                     }
 
-                    return entry;
+                    // New point: start at final position + shift, animate to final position
+                    // This keeps new points at correct relative spacing from the start
+                    if (current.x !== null) {
+                      return { ...current, x: interpolate(current.x + avgShift, current.x, t), y: current.y };
+                    }
+
+                    return current;
                   });
             let stepBaseLine: number | ReadonlyArray<NullableCoordinate>;
 
@@ -684,15 +729,21 @@ function AreaWithAnimation({
             } else if (isNullish(baseLine) || isNan(baseLine)) {
               stepBaseLine = interpolate(prevBaseLine, 0, t);
             } else {
-              stepBaseLine = baseLine.map((entry, index) => {
-                const prevPointIndex = Math.floor(index * prevPointsDiffFactor);
-                if (Array.isArray(prevBaseLine) && prevBaseLine[prevPointIndex]) {
-                  const prev = prevBaseLine[prevPointIndex];
-
-                  return { ...entry, x: interpolate(prev.x, entry.x, t), y: interpolate(prev.y, entry.y, t) };
+              // For baseline arrays, use the same matching strategy as points
+              const matchedBaseline = matchPointsByStrategy(
+                baseLine as ReadonlyArray<NullableCoordinate>,
+                Array.isArray(prevBaseLine) ? prevBaseLine : null,
+                animationMatchBy,
+              );
+              stepBaseLine = matchedBaseline.map(({ current, previous }) => {
+                if (previous) {
+                  return {
+                    ...current,
+                    x: interpolate(previous.x, current.x, t),
+                    y: interpolate(previous.y, current.y, t),
+                  };
                 }
-
-                return entry;
+                return current;
               });
             }
 
@@ -848,6 +899,7 @@ export const defaultAreaProps = {
   animationBegin: 0,
   animationDuration: 1500,
   animationEasing: 'ease',
+  animationMatchBy: 'index',
   connectNulls: false,
   dot: false,
   fill: '#3182bd',
@@ -870,6 +922,7 @@ function AreaImpl(props: WithIdRequired<Props>) {
     animationBegin,
     animationDuration,
     animationEasing,
+    animationMatchBy,
     connectNulls,
     dot,
     fill,
@@ -913,6 +966,7 @@ function AreaImpl(props: WithIdRequired<Props>) {
       animationBegin={animationBegin}
       animationDuration={animationDuration}
       animationEasing={animationEasing}
+      animationMatchBy={animationMatchBy}
       baseLine={baseLine}
       connectNulls={connectNulls}
       dot={dot}

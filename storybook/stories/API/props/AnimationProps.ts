@@ -26,6 +26,18 @@ export const animationEasing: StorybookArg = {
   },
 };
 
+export const animationMatchBy: StorybookArg = {
+  description:
+    'Controls how points are matched during animation. Use "x" for smooth sliding window animations in time-series charts.',
+  defaultValue: 'index',
+  options: ['index', 'x'],
+  control: { type: 'select' },
+  table: {
+    type: { summary: '"index" | "x" | DataKey | Function' },
+    category: 'Animation',
+  },
+};
+
 export const isAnimationActive: StorybookArg = {
   description: 'If set false, animation of component will be disabled.',
   defaultValue: 'auto',

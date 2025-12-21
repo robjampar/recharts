@@ -23,6 +23,7 @@ import {
 import { Dots } from '../component/Dots';
 import { ErrorBarDataItem, ErrorBarDataPointFormatter } from './ErrorBar';
 import { interpolate, isNullish } from '../util/DataUtils';
+import { PointMatchingStrategy, matchPointsByStrategy } from '../animation/pointMatching';
 import { isClipDot } from '../util/ReactUtils';
 import { getCateCoordinateOfLine, getTooltipNameProp, getValueByDataKey } from '../util/ChartUtils';
 import {
@@ -84,10 +85,12 @@ export interface LinePointItem {
  */
 interface InternalLineProps extends ZIndexable {
   activeDot: ActiveDotType;
+  animateFade: boolean;
   animateNewValues: boolean;
   animationBegin: number;
   animationDuration: AnimationDuration;
   animationEasing: AnimationTiming;
+  animationMatchBy: PointMatchingStrategy<LinePointItem>;
 
   className?: string;
   connectNulls: boolean;
@@ -159,6 +162,36 @@ interface LineProps extends ZIndexable {
    * @defaultValue ease
    */
   animationEasing?: AnimationTiming;
+  /**
+   * Controls how points are matched between data updates during animation.
+   *
+   * This is important for smooth animations when data changes, especially for
+   * time-series charts with sliding windows where new data is appended and old data removed.
+   *
+   * - `'index'`: Match by array index (default, current behavior). May cause visual distortion
+   *   with sliding windows as points animate to wrong positions.
+   * - `'x'`: Match by x-coordinate. Ideal for time-series data where each point has a unique
+   *   x-position. Points with the same x will smoothly animate to their new y-values, and
+   *   new points will smoothly enter from the appropriate edge.
+   * - `string` (DataKey): Match by a specific key in the data payload (e.g., 'timestamp', 'id').
+   *   Useful for categorical data or when x-coordinates may change.
+   * - `function`: Custom matching function `(point, index) => key`. Return a unique identifier
+   *   for each point to control how points are matched.
+   *
+   * @defaultValue 'index'
+   * @example <Line dataKey="value" animationMatchBy="x" /> // Match by x-coordinate for time-series
+   * @example <Line dataKey="value" animationMatchBy="timestamp" /> // Match by timestamp in payload
+   * @example <Line dataKey="value" animationMatchBy={(point) => point.payload?.id} /> // Custom matching
+   */
+  animationMatchBy?: PointMatchingStrategy<LinePointItem>;
+  /**
+   * When true, new segments entering the chart will fade in as they slide into view.
+   * Works in conjunction with animationMatchBy to create a smooth reveal effect for new data.
+   *
+   * @defaultValue false
+   * @example <Line dataKey="value" animationMatchBy="x" animateFade />
+   */
+  animateFade?: boolean;
   className?: string;
   /**
    * Whether to connect the line across null points.
@@ -492,25 +525,111 @@ function LineLabelListProvider({
   );
 }
 
+interface FadeConfig {
+  direction: 'left' | 'right' | 'both' | null;
+  progress: number; // 0 to 1, where 1 means fully visible
+  leftBound: number; // x-coordinate where left fade ends
+  rightBound: number; // x-coordinate where right fade starts
+}
+
 function StaticCurve({
   clipPathId,
   pathRef,
   points,
   strokeDasharray,
   props,
+  fadeConfig,
 }: {
   clipPathId: string;
   pathRef: Ref<SVGPathElement>;
   points: ReadonlyArray<LinePointItem>;
   props: InternalProps;
   strokeDasharray?: string;
+  fadeConfig?: FadeConfig;
 }) {
   const { type, layout, connectNulls, needClip, shape, ...others } = props;
+
+  // Generate unique IDs for gradient mask
+  const fadeMaskId = `fade-mask-${clipPathId}`;
+  const fadeGradientId = `fade-gradient-${clipPathId}`;
+
+  // Calculate gradient stops based on fade progress
+  const renderFadeMask = () => {
+    if (!fadeConfig || fadeConfig.direction === null || fadeConfig.progress >= 1) {
+      return null;
+    }
+
+    const { direction, progress, leftBound, rightBound } = fadeConfig;
+
+    // Find min/max x for the gradient coordinate system
+    let minX = Infinity;
+    let maxX = -Infinity;
+    for (const p of points) {
+      if (p.x !== null) {
+        minX = Math.min(minX, p.x);
+        maxX = Math.max(maxX, p.x);
+      }
+    }
+
+    if (minX === Infinity) return null;
+
+    const range = maxX - minX || 1;
+
+    // Calculate gradient stops - fade edge moves with progress
+    let stops: Array<{ offset: string; opacity: number }> = [];
+
+    if (direction === 'right') {
+      // New points entering from right - fade the right edge
+      const fadeStart = ((rightBound - minX) / range) * 100;
+      stops = [
+        { offset: '0%', opacity: 1 },
+        { offset: `${Math.max(0, fadeStart)}%`, opacity: 1 },
+        { offset: `${Math.min(100, fadeStart + (100 - fadeStart) * 0.3)}%`, opacity: progress },
+        { offset: '100%', opacity: progress },
+      ];
+    } else if (direction === 'left') {
+      // New points entering from left - fade the left edge
+      const fadeEnd = ((leftBound - minX) / range) * 100;
+      stops = [
+        { offset: '0%', opacity: progress },
+        { offset: `${Math.max(0, fadeEnd * 0.7)}%`, opacity: progress },
+        { offset: `${Math.min(100, fadeEnd)}%`, opacity: 1 },
+        { offset: '100%', opacity: 1 },
+      ];
+    } else if (direction === 'both') {
+      // Fading from both sides
+      const leftFadeEnd = ((leftBound - minX) / range) * 100;
+      const rightFadeStart = ((rightBound - minX) / range) * 100;
+      stops = [
+        { offset: '0%', opacity: progress },
+        { offset: `${Math.max(0, leftFadeEnd * 0.7)}%`, opacity: progress },
+        { offset: `${Math.min(leftFadeEnd, 30)}%`, opacity: 1 },
+        { offset: `${Math.max(rightFadeStart, 70)}%`, opacity: 1 },
+        { offset: `${Math.min(100, rightFadeStart + (100 - rightFadeStart) * 0.3)}%`, opacity: progress },
+        { offset: '100%', opacity: progress },
+      ];
+    }
+
+    return (
+      <defs>
+        <linearGradient id={fadeGradientId} x1="0%" y1="0%" x2="100%" y2="0%">
+          {stops.map((stop, i) => (
+            <stop key={i} offset={stop.offset} stopColor="white" stopOpacity={stop.opacity} />
+          ))}
+        </linearGradient>
+        <mask id={fadeMaskId}>
+          <rect x={minX - 50} y={-10000} width={range + 100} height={20000} fill={`url(#${fadeGradientId})`} />
+        </mask>
+      </defs>
+    );
+  };
+
   const curveProps: CurveProps = {
     ...svgPropertiesAndEvents(others),
     fill: 'none',
     className: 'recharts-line-curve',
     clipPath: needClip ? `url(#clipPath-${clipPathId})` : undefined,
+    mask: fadeConfig && fadeConfig.direction && fadeConfig.progress < 1 ? `url(#${fadeMaskId})` : undefined,
     points,
     type,
     layout,
@@ -520,6 +639,7 @@ function StaticCurve({
 
   return (
     <>
+      {renderFadeMask()}
       {points?.length > 1 && <Shape shapeType="curve" option={shape} {...curveProps} pathRef={pathRef} />}
       <LineDotsWrapper points={points} clipPathId={clipPathId} props={props} />
     </>
@@ -554,9 +674,9 @@ function CurveWithAnimation({
     animationBegin,
     animationDuration,
     animationEasing,
+    animationMatchBy,
+    animateFade,
     animateNewValues,
-    width,
-    height,
     onAnimationEnd,
     onAnimationStart,
   } = props;
@@ -681,35 +801,86 @@ function CurveWithAnimation({
           }
 
           if (prevPoints) {
-            const prevPointsDiffFactor = prevPoints.length / points.length;
+            const matchedPoints = matchPointsByStrategy(points, prevPoints, animationMatchBy);
+
+            // Calculate global shift from matched points - how far the line is moving
+            let totalShift = 0;
+            let matchedCount = 0;
+            let hasNewPoints = false;
+            for (const { current, previous } of matchedPoints) {
+              if (previous && current.x !== null && previous.x !== null) {
+                totalShift += previous.x - current.x;
+                matchedCount++;
+              } else if (!previous) {
+                hasNewPoints = true;
+              }
+            }
+            const avgShift = matchedCount > 0 ? totalShift / matchedCount : 0;
+
+            // Pre-compute min/max x of all current points (for fade bounds)
+            let minX = Infinity;
+            let maxX = -Infinity;
+            for (const p of points) {
+              if (p.x !== null) {
+                minX = Math.min(minX, p.x);
+                maxX = Math.max(maxX, p.x);
+              }
+            }
+
+            // Determine fade direction based on shift direction
+            let fadeDirection: 'left' | 'right' | 'both' | null = null;
+            const fadeLeftBound = minX;
+            const fadeRightBound = maxX;
+
+            if (animateFade && animateNewValues && hasNewPoints) {
+              // Positive shift means line is moving right (new points on left)
+              // Negative shift means line is moving left (new points on right)
+              if (avgShift > 0) {
+                fadeDirection = 'left';
+              } else if (avgShift < 0) {
+                fadeDirection = 'right';
+              }
+            }
+
             const stepData =
               t === 1
                 ? points
-                : points.map((entry, index): LinePointItem => {
-                    const prevPointIndex = Math.floor(index * prevPointsDiffFactor);
-                    if (prevPoints[prevPointIndex]) {
-                      const prev = prevPoints[prevPointIndex];
+                : matchedPoints.map(({ current, previous }): LinePointItem => {
+                    if (previous) {
+                      // Matched point: interpolate from old position to new
                       return {
-                        ...entry,
-                        x: interpolate(prev.x, entry.x, t),
-                        y: interpolate(prev.y, entry.y, t),
+                        ...current,
+                        x: interpolate(previous.x, current.x, t),
+                        y: interpolate(previous.y, current.y, t),
                       };
                     }
 
-                    // magic number of faking previous x and y location
-                    if (animateNewValues) {
+                    // New point: start at final position + shift, animate to final position
+                    // This keeps new points at correct relative spacing from the start
+                    if (animateNewValues && current.x !== null) {
                       return {
-                        ...entry,
-                        x: interpolate(width * 2, entry.x, t),
-                        y: interpolate(height / 2, entry.y, t),
+                        ...current,
+                        x: interpolate(current.x + avgShift, current.x, t),
+                        y: current.y,
                       };
                     }
                     return {
-                      ...entry,
-                      x: entry.x,
-                      y: entry.y,
+                      ...current,
+                      x: current.x,
+                      y: current.y,
                     };
                   });
+
+            const fadeConfig: FadeConfig | undefined =
+              animateFade && fadeDirection
+                ? {
+                    direction: fadeDirection,
+                    progress: t,
+                    leftBound: fadeLeftBound,
+                    rightBound: fadeRightBound,
+                  }
+                : undefined;
+
             // eslint-disable-next-line no-param-reassign
             previousPointsRef.current = stepData;
             return (
@@ -719,6 +890,7 @@ function CurveWithAnimation({
                 clipPathId={clipPathId}
                 pathRef={pathRef}
                 strokeDasharray={currentStrokeDasharray}
+                fadeConfig={fadeConfig}
               />
             );
           }
@@ -826,10 +998,12 @@ class LineWithState extends Component<InternalProps> {
 
 export const defaultLineProps = {
   activeDot: true,
+  animateFade: false,
   animateNewValues: true,
   animationBegin: 0,
   animationDuration: 1500,
   animationEasing: 'ease',
+  animationMatchBy: 'index',
   connectNulls: false,
   dot: true,
   fill: '#fff',
@@ -848,10 +1022,12 @@ export const defaultLineProps = {
 function LineImpl(props: WithIdRequired<Props>) {
   const {
     activeDot,
+    animateFade,
     animateNewValues,
     animationBegin,
     animationDuration,
     animationEasing,
+    animationMatchBy,
     connectNulls,
     dot,
     hide,
@@ -889,6 +1065,7 @@ function LineImpl(props: WithIdRequired<Props>) {
       animationBegin={animationBegin}
       animationDuration={animationDuration}
       animationEasing={animationEasing}
+      animationMatchBy={animationMatchBy}
       isAnimationActive={isAnimationActive}
       hide={hide}
       label={label}

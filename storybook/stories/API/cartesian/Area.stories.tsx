@@ -3,7 +3,7 @@ import { Args } from '@storybook/react-vite';
 import { ComposedChart, Area, ResponsiveContainer, Legend, Tooltip, XAxis, YAxis } from '../../../../src';
 import { pageData } from '../../data';
 import { LineStyle } from '../props/Styles';
-import { AnimationProps } from '../props/AnimationProps';
+import { animationMatchBy, AnimationProps } from '../props/AnimationProps';
 import { legendType } from '../props/Legend';
 import { General as GeneralProps, data } from '../props/CartesianComponentShared';
 import { ResponsiveProps } from '../props/Tooltip';
@@ -51,6 +51,7 @@ const AreaArgTypes: StorybookArgs = {
       category: 'Style',
     },
   },
+  animationMatchBy,
   ...AnimationProps,
   legendType,
   ...GeneralProps,

@@ -120,6 +120,7 @@ describe('readStorybookDoc', () => {
         "animationBegin",
         "animationDuration",
         "animationEasing",
+        "animationMatchBy",
         "baseLine",
         "baseValue",
         "connectNulls",

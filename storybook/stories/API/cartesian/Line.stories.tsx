@@ -3,7 +3,7 @@ import { Args } from '@storybook/react-vite';
 import { Line, ResponsiveContainer, ComposedChart, Legend, Tooltip, XAxis, YAxis } from '../../../../src';
 import { pageData } from '../../data';
 import { EventHandlers } from '../props/EventHandlers';
-import { animateNewValues, AnimationProps } from '../props/AnimationProps';
+import { animateNewValues, animationMatchBy, AnimationProps } from '../props/AnimationProps';
 import { legendType } from '../props/Legend';
 import { LineStyle } from '../props/Styles';
 import { getStoryArgsFromArgsTypesObject } from '../props/utils';
@@ -15,6 +15,7 @@ export default {
   argTypes: {
     ...EventHandlers,
     animateNewValues,
+    animationMatchBy,
     ...AnimationProps,
     legendType,
     ...GeneralProps,
