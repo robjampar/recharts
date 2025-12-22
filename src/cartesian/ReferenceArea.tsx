@@ -1,5 +1,5 @@
 import * as React from 'react';
-import { ReactElement, useEffect } from 'react';
+import { ReactElement, useEffect, useId, useRef } from 'react';
 import { clsx } from 'clsx';
 import { Layer } from '../container/Layer';
 import { CartesianLabelContextProvider, CartesianLabelFromLabelProp, ImplicitLabelType } from '../component/Label';
@@ -20,6 +20,7 @@ import { RequiresDefaultProps, resolveDefaultProps } from '../util/resolveDefaul
 import { ZIndexable, ZIndexLayer } from '../zIndex/ZIndexLayer';
 import { DefaultZIndexes } from '../zIndex/DefaultZIndexes';
 import { RechartsScale } from '../util/scale/RechartsScale';
+import { JavascriptAnimate } from '../animation/JavascriptAnimate';
 
 interface ReferenceAreaProps extends ZIndexable {
   /**
@@ -47,6 +48,30 @@ interface ReferenceAreaProps extends ZIndexable {
    */
   zIndex?: number;
   children?: React.ReactNode;
+
+  /**
+   * Whether to animate the reference area when its position changes.
+   * @defaultValue false
+   */
+  isAnimationActive?: boolean;
+
+  /**
+   * The duration of the animation in milliseconds.
+   * @defaultValue 300
+   */
+  animationDuration?: number;
+
+  /**
+   * The easing function for the animation.
+   * @defaultValue 'ease'
+   */
+  animationEasing?: 'ease' | 'ease-in' | 'ease-out' | 'ease-in-out' | 'linear';
+
+  /**
+   * The delay before the animation starts in milliseconds.
+   * @defaultValue 0
+   */
+  animationBegin?: number;
 }
 
 /*
@@ -115,8 +140,31 @@ function ReportReferenceArea(props: ReferenceAreaSettings): null {
   return null;
 }
 
+function interpolate(from: number | undefined, to: number | undefined, t: number): number {
+  const fromVal = from ?? 0;
+  const toVal = to ?? 0;
+  return fromVal + (toVal - fromVal) * t;
+}
+
 function ReferenceAreaImpl(props: PropsWithDefaults) {
-  const { x1, x2, y1, y2, className, shape, xAxisId, yAxisId } = props;
+  const {
+    x1,
+    x2,
+    y1,
+    y2,
+    className,
+    shape,
+    xAxisId,
+    yAxisId,
+    isAnimationActive,
+    animationDuration,
+    animationEasing,
+    animationBegin,
+  } = props;
+
+  const animationId = useId();
+  const previousRectRef = useRef<RectanglePosition | null>(null);
+
   const clipPathId = useClipPathId();
   const isPanorama = useIsPanorama();
   const xAxisScale = useAppSelector(state => selectAxisScale(state, 'xAxis', xAxisId, isPanorama));
@@ -144,19 +192,68 @@ function ReferenceAreaImpl(props: PropsWithDefaults) {
   const isOverflowHidden = props.ifOverflow === 'hidden';
   const clipPath = isOverflowHidden ? `url(#${clipPathId})` : undefined;
 
-  return (
-    <ZIndexLayer zIndex={props.zIndex}>
-      <Layer className={clsx('recharts-reference-area', className)}>
-        {renderRect(shape, { clipPath, ...svgPropertiesAndEvents(props), ...rect })}
-        {rect != null && (
-          <CartesianLabelContextProvider {...rect} lowerWidth={rect.width} upperWidth={rect.width}>
-            <CartesianLabelFromLabelProp label={props.label} />
-            {props.children}
-          </CartesianLabelContextProvider>
-        )}
-      </Layer>
-    </ZIndexLayer>
-  );
+  // Check if we should animate
+  const prevRect = previousRectRef.current;
+  const shouldAnimate =
+    isAnimationActive &&
+    rect != null &&
+    prevRect != null &&
+    (prevRect.x !== rect.x ||
+      prevRect.y !== rect.y ||
+      prevRect.width !== rect.width ||
+      prevRect.height !== rect.height);
+
+  const renderContent = (animatedRect: RectanglePosition | null) => {
+    return (
+      <ZIndexLayer zIndex={props.zIndex}>
+        <Layer className={clsx('recharts-reference-area', className)}>
+          {renderRect(shape, { clipPath, ...svgPropertiesAndEvents(props), ...animatedRect })}
+          {animatedRect != null && (
+            <CartesianLabelContextProvider
+              {...animatedRect}
+              lowerWidth={animatedRect.width}
+              upperWidth={animatedRect.width}
+            >
+              <CartesianLabelFromLabelProp label={props.label} />
+              {props.children}
+            </CartesianLabelContextProvider>
+          )}
+        </Layer>
+      </ZIndexLayer>
+    );
+  };
+
+  if (shouldAnimate && prevRect && rect) {
+    return (
+      <JavascriptAnimate
+        animationId={`reference-area-${animationId}`}
+        duration={animationDuration}
+        easing={animationEasing}
+        begin={animationBegin}
+        isActive
+      >
+        {(t: number) => {
+          const animatedRect: RectanglePosition = {
+            x: interpolate(prevRect.x, rect.x, t),
+            y: interpolate(prevRect.y, rect.y, t),
+            width: interpolate(prevRect.width, rect.width, t),
+            height: interpolate(prevRect.height, rect.height, t),
+          };
+
+          // Update ref at end of animation
+          if (t === 1) {
+            previousRectRef.current = rect;
+          }
+
+          return renderContent(animatedRect);
+        }}
+      </JavascriptAnimate>
+    );
+  }
+
+  // No animation - just render and update ref
+  previousRectRef.current = rect;
+  return renderContent(rect);
 }
 
 export const referenceAreaDefaultProps = {
@@ -169,6 +266,10 @@ export const referenceAreaDefaultProps = {
   stroke: 'none',
   strokeWidth: 1,
   zIndex: DefaultZIndexes.area,
+  isAnimationActive: false,
+  animationDuration: 300,
+  animationEasing: 'ease',
+  animationBegin: 0,
 } as const satisfies Partial<Props>;
 
 type PropsWithDefaults = RequiresDefaultProps<Props, typeof referenceAreaDefaultProps>;
