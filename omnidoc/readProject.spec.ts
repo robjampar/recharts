@@ -790,8 +790,12 @@ describe('readProject', () => {
   it('should return props of ReferenceLine', () => {
     expect(reader.getRechartsPropsOf('ReferenceLine')).toMatchInlineSnapshot(`
       [
+        "animationBegin",
+        "animationDuration",
+        "animationEasing",
         "className",
         "ifOverflow",
+        "isAnimationActive",
         "label",
         "position",
         "segment",

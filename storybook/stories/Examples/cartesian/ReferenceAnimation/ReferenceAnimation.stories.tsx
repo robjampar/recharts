@@ -1016,12 +1016,13 @@ export const OuteractEventStreamDemo = {
         end: new Date(lastEvent.timestamp),
       });
 
-      // Use FIRST visible message for chart centering - this is what the user sees at top
-      const d = new Date(firstEvent.timestamp);
-      setStickyDate(d.toLocaleDateString([], { weekday: 'short', month: 'short', day: 'numeric' }));
+      // Use CENTER of visible range for chart centering - this keeps the ReferenceArea centered on chart
+      const centerTimestamp = (firstEvent.timestamp + lastEvent.timestamp) / 2;
+      const centerDate = new Date(centerTimestamp);
+      setStickyDate(centerDate.toLocaleDateString([], { weekday: 'short', month: 'short', day: 'numeric' }));
 
-      // Update current visible date for chart centering on EVERY scroll (remove throttling for smoother sliding)
-      setCurrentVisibleDate(d);
+      // Update current visible date for chart centering on EVERY scroll
+      setCurrentVisibleDate(centerDate);
     }, []);
 
     // Convert mouse position to timestamp (like outeract getDateFromMousePosition)
